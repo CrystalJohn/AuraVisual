@@ -13,6 +13,21 @@ export enum ModelStyle {
   DIGITAL_ART = 'Digital Art',
   FASHION_EDITORIAL = 'Fashion Editorial',
   CYBERPUNK = 'Cyberpunk',
+  PIXAR_CLASSIC = 'Pixar Classic',
+  MODERN_DISNEY = 'Modern Disney',
+  CLAYMATION = 'Claymation',
+}
+
+export interface GenerationTask {
+  id: string;
+  status: 'pending' | 'completed' | 'failed';
+  images?: string[];
+  timestamp: number;
+  params: {
+    prompt: string;
+    style: ModelStyle;
+    ratio: AspectRatio;
+  };
 }
 
 export interface GeneratedImage {

@@ -1,5 +1,5 @@
 {
   "name": "Aura - AI Influencer Creator",
-  "description": "Create consistent character images with AI using reference photos. Inspired by Midjourney/SeaArt UX.",
+  "description": "Create consistent character images with AI using reference photos and a dedicated Pixar 3D Studio for animation-style characters.",
   "requestFramePermissions": []
 }

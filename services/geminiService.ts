@@ -134,8 +134,8 @@ export const generateInfluencerImage = async (
       }
 
       // Check Content and Parts existence
-      if (!firstCandidate.content || !firstCandidate.content.parts) {
-          throw new Error("No content generated. The model might have refused the request.");
+      if (!firstCandidate.content || !firstCandidate.content.parts || firstCandidate.content.parts.length === 0) {
+          throw new Error("The model returned an empty response. This can happen if the prompt is too complex or triggers internal filters.");
       }
 
       const outputParts = firstCandidate.content.parts;

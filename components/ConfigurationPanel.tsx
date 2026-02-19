@@ -34,7 +34,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = () => {
-    if (!prompt.trim() || isGenerating) return;
+    if (!prompt.trim()) return;
     
     // Mode Validation
     if (mode === 'image' && !referenceImage) {
@@ -51,6 +51,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
     const effectiveReferenceImage = mode === 'image' ? referenceImage : null;
 
     onGenerate(prompt, selectedRatio, selectedStyle, finalOutfit, batchSize, imageStrength, effectiveReferenceImage);
+    setPrompt(''); // Clear input immediately
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -167,6 +168,23 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
              placeholder={mode === 'image' ? "Describe how to adapt the reference character..." : "Describe the scene, lighting, and character appearance..."}
              className="w-full h-32 bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-lime-500/50 focus:ring-1 focus:ring-lime-500/20 resize-none transition-all"
            />
+           
+           {/* Sample Prompts */}
+           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+             {[
+               "Cyberpunk street market at night, neon lights",
+               "Portrait in a sunlit garden, soft bokeh",
+               "Futuristic fashion editorial, sleek white background"
+             ].map((sample, i) => (
+               <button
+                 key={i}
+                 onClick={() => setPrompt(sample)}
+                 className="whitespace-nowrap px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400 hover:text-lime-400 hover:border-lime-500/30 transition-colors"
+               >
+                 {sample}
+               </button>
+             ))}
+           </div>
         </div>
 
         {/* 3. Style & Outfit */}
@@ -250,10 +268,10 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
       <div className="p-6 border-t border-zinc-800 bg-zinc-950">
         <button
             onClick={handleSubmit}
-            disabled={!prompt.trim() || isGenerating}
+            disabled={!prompt.trim()}
             className={`
                 w-full h-14 rounded-xl font-bold text-base transition-all flex items-center justify-center gap-3 uppercase tracking-wide
-                ${!prompt.trim() || isGenerating 
+                ${!prompt.trim() 
                     ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-800' 
                     : 'bg-lime-400 hover:bg-lime-500 text-black shadow-[0_0_20px_-5px_rgba(163,230,53,0.4)] hover:shadow-[0_0_30px_-5px_rgba(163,230,53,0.6)]'
                 }
@@ -262,7 +280,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
             {isGenerating ? (
                 <>
                   <Loader2 size={20} className="animate-spin" />
-                  Generating...
+                  Queuing...
                 </>
             ) : (
                 <>
