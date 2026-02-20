@@ -10,6 +10,8 @@ interface ConfigurationPanelProps {
   referenceImage: string | null;
   onUploadReference: (file: File) => void;
   onClearReference: () => void;
+  cooldownRemaining?: number;
+  quotaInfo?: { dailyCount: number; dailyLimit: number; remaining: number };
 }
 
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
@@ -17,7 +19,9 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   isGenerating,
   referenceImage,
   onUploadReference,
-  onClearReference
+  onClearReference,
+  cooldownRemaining = 0,
+  quotaInfo
 }) => {
   const [prompt, setPrompt] = useState('');
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>(AspectRatio.PORTRAIT);
@@ -35,6 +39,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
 
   const handleSubmit = () => {
     if (!prompt.trim()) return;
+    if (cooldownRemaining > 0) return;
     
     // Mode Validation
     if (mode === 'image' && !referenceImage) {
@@ -56,19 +61,29 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      onUploadReference(e.target.files[0]);
+        onUploadReference(e.target.files[0]);
     }
   };
 
   return (
     <div className="w-[400px] h-full bg-zinc-950 border-l border-zinc-800 flex flex-col shrink-0 z-20">
       {/* Header */}
-      <div className="p-6 border-b border-zinc-800">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <Sparkles size={18} className="text-lime-400" />
-          Studio Config
-        </h2>
-        <p className="text-xs text-zinc-500 mt-1">Configure your generation parameters</p>
+      <div className="p-6 border-b border-zinc-800 flex justify-between items-start">
+        <div>
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Sparkles size={18} className="text-lime-400" />
+            Studio Config
+            </h2>
+            <p className="text-xs text-zinc-500 mt-1">Configure your generation parameters</p>
+        </div>
+        {quotaInfo && (
+            <div className="text-[10px] font-mono bg-zinc-900 border border-zinc-800 px-2 py-1 rounded text-zinc-400 text-right">
+                <div className={quotaInfo.remaining < 20 ? "text-red-400" : "text-lime-400"}>
+                    DAILY: {quotaInfo.dailyCount}/{quotaInfo.dailyLimit}
+                </div>
+                <div>RESET: 00:00</div>
+            </div>
+        )}
       </div>
 
       {/* Scrollable Content */}
@@ -238,9 +253,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
           </label>
           
           <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl border border-zinc-800">
-             <span className="text-sm text-zinc-300">Batch Size</span>
+             <div className="flex flex-col">
+                <span className="text-sm text-zinc-300">Batch Size</span>
+                <span className="text-[10px] text-zinc-500">Max 2 for free quota</span>
+             </div>
              <div className="flex bg-zinc-950 p-1 rounded-lg border border-zinc-800">
-                {[1, 2, 3, 4].map((num) => (
+                {[1, 2].map((num) => (
                   <button
                     key={num}
                     onClick={() => setBatchSize(num)}
@@ -268,10 +286,10 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
       <div className="p-6 border-t border-zinc-800 bg-zinc-950">
         <button
             onClick={handleSubmit}
-            disabled={!prompt.trim()}
+            disabled={!prompt.trim() || isGenerating || cooldownRemaining > 0}
             className={`
                 w-full h-14 rounded-xl font-bold text-base transition-all flex items-center justify-center gap-3 uppercase tracking-wide
-                ${!prompt.trim() 
+                ${!prompt.trim() || isGenerating || cooldownRemaining > 0
                     ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-800' 
                     : 'bg-lime-400 hover:bg-lime-500 text-black shadow-[0_0_20px_-5px_rgba(163,230,53,0.4)] hover:shadow-[0_0_30px_-5px_rgba(163,230,53,0.6)]'
                 }
@@ -281,6 +299,11 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                 <>
                   <Loader2 size={20} className="animate-spin" />
                   Queuing...
+                </>
+            ) : cooldownRemaining > 0 ? (
+                <>
+                    <Loader2 size={20} className="animate-pulse" />
+                    Wait {cooldownRemaining}s
                 </>
             ) : (
                 <>

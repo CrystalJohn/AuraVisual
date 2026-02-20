@@ -46,3 +46,13 @@ export interface GenerationConfig {
   style: ModelStyle;
   referenceImage: string | null; // Base64 string
 }
+
+export interface PromptCard {
+  id: string;
+  prompt: string;
+  style: ModelStyle;
+  ratio: AspectRatio;
+  status: 'idle' | 'queued' | 'generating' | 'done' | 'failed';
+  resultImage?: string;
+  error?: string;
+}

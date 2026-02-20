@@ -1,9 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { AspectRatio, ModelStyle } from "../types";
+import { rateLimiter, withRetry } from "./rateLimiter";
+import { uploadToCloudinary } from "./cloudinaryService";
 
 /**
  * Handles the generation logic.
- * Supports batch generation by running parallel requests.
+ * Supports batch generation by running SEQUENTIAL requests to respect rate limits.
  * 
  * @param prompt User text description
  * @param referenceImageBase64 (Optional) Reference image for character consistency
@@ -26,162 +28,182 @@ export const generateInfluencerImage = async (
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const generateSingleImage = async (): Promise<string> => {
-    try {
-      const modelId = 'gemini-3-pro-image-preview'; 
-      console.log(`[Aura AI] Generating single image with ${modelId} | Ratio: ${ratio} | Strength: ${imageStrength}`);
+    return withRetry(async () => {
+        // Track daily quota (synchronous — no cooldown)
+        rateLimiter.trackRequest();
 
-      let finalPrompt = "";
-      
-      // Construct Outfit Prompt Segment
-      const outfitInstruction = outfit 
-          ? `\nOUTFIT REQUIREMENT: The character MUST be wearing: "${outfit}". CHANGE the original clothing from the reference image (if any) to match this new description exactly. Keep the face and body type, but replace the outfit.`
-          : "";
+        try {
+        const modelId = 'gemini-3-pro-image-preview'; 
+        console.log(`[Aura AI] Generating single image with ${modelId} | Ratio: ${ratio} | Strength: ${imageStrength}`);
 
-      if (referenceImageBase64) {
-        // Construct instruction based on imageStrength
-        // High strength (>0.7) -> Emphasis on Structure/Pose/Identity
-        // Low strength (<0.4) -> Emphasis on creative interpretation of text
-        let strengthInstruction = "";
+        let finalPrompt = "";
         
-        if (imageStrength >= 0.8) {
-             strengthInstruction = "STRICTLY FOLLOW the pose, composition, angle, and facial structure of the reference image. The output should look like a direct variation of the reference.";
-        } else if (imageStrength >= 0.6) {
-             strengthInstruction = "Maintain the character's identity and general pose. You may slightly adapt the composition to fit the new scene description.";
+        // Construct Outfit Prompt Segment
+        const outfitInstruction = outfit 
+            ? `\nOUTFIT REQUIREMENT: The character MUST be wearing: "${outfit}". CHANGE the original clothing from the reference image (if any) to match this new description exactly. Keep the face and body type, but replace the outfit.`
+            : "";
+
+        if (referenceImageBase64) {
+            // Construct instruction based on imageStrength
+            // High strength (>0.7) -> Emphasis on Structure/Pose/Identity
+            // Low strength (<0.4) -> Emphasis on creative interpretation of text
+            let strengthInstruction = "";
+            
+            if (imageStrength >= 0.8) {
+                strengthInstruction = "STRICTLY FOLLOW the pose, composition, angle, and facial structure of the reference image. The output should look like a direct variation of the reference.";
+            } else if (imageStrength >= 0.6) {
+                strengthInstruction = "Maintain the character's identity and general pose. You may slightly adapt the composition to fit the new scene description.";
+            } else {
+                strengthInstruction = "Use the reference image PRIMARILY for character identity. You have CREATIVE FREEDOM to change the pose, camera angle, and composition to best fit the text description.";
+            }
+
+            finalPrompt = `
+            INSTRUCTION: You are an expert AI photographer.
+            TASK: Generate a new photo using the attached reference image as a guide.
+            
+            GUIDELINES:
+            1. IMAGE INFLUENCE (Strength ${imageStrength}): ${strengthInstruction}
+            2. IDENTITY PRESERVATION: Ensure the character looks like the person in the reference image (facial features, body type, age, ethnicity).
+            3. SCENE: Place this character in the following scenario: "${prompt}".
+            4. STYLE: Apply the visual style: "${style}".${outfitInstruction}
+            5. COMPOSITION: Professional photography, high detailed, photorealistic lighting, 8k resolution.
+            `;
         } else {
-             strengthInstruction = "Use the reference image PRIMARILY for character identity. You have CREATIVE FREEDOM to change the pose, camera angle, and composition to best fit the text description.";
+            // Text-to-Image mode
+            finalPrompt = `
+            Generate a high-quality, photorealistic image.
+            Description: ${prompt}
+            ${outfit ? `Character Outfit: ${outfit}` : ''}
+            Style: ${style}
+            Lighting: Professional cinematic lighting.
+            Quality: 8k, detailed texture.
+            `;
         }
 
-        finalPrompt = `
-        INSTRUCTION: You are an expert AI photographer.
-        TASK: Generate a new photo using the attached reference image as a guide.
-        
-        GUIDELINES:
-        1. IMAGE INFLUENCE (Strength ${imageStrength}): ${strengthInstruction}
-        2. IDENTITY PRESERVATION: Ensure the character looks like the person in the reference image (facial features, body type, age, ethnicity).
-        3. SCENE: Place this character in the following scenario: "${prompt}".
-        4. STYLE: Apply the visual style: "${style}".${outfitInstruction}
-        5. COMPOSITION: Professional photography, high detailed, photorealistic lighting, 8k resolution.
-        `;
-      } else {
-        // Text-to-Image mode
-        finalPrompt = `
-        Generate a high-quality, photorealistic image.
-        Description: ${prompt}
-        ${outfit ? `Character Outfit: ${outfit}` : ''}
-        Style: ${style}
-        Lighting: Professional cinematic lighting.
-        Quality: 8k, detailed texture.
-        `;
-      }
+        // Prepare Payload
+        const parts: any[] = [
+            { text: finalPrompt }
+        ];
 
-      // Prepare Payload
-      const parts: any[] = [
-        { text: finalPrompt }
-      ];
+        // Add Reference Image if exists
+        if (referenceImageBase64) {
+            const base64Data = referenceImageBase64.includes(',') 
+            ? referenceImageBase64.split(',')[1] 
+            : referenceImageBase64;
+            
+            parts.unshift({
+            inlineData: {
+                mimeType: 'image/jpeg', 
+                data: base64Data
+            }
+            });
+        }
 
-      // Add Reference Image if exists
-      if (referenceImageBase64) {
-        const base64Data = referenceImageBase64.includes(',') 
-          ? referenceImageBase64.split(',')[1] 
-          : referenceImageBase64;
-        
-        parts.unshift({
-          inlineData: {
-            mimeType: 'image/jpeg', 
-            data: base64Data
-          }
+        // Call Gemini API
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: {
+            parts: parts
+            },
+            config: {
+            imageConfig: {
+                aspectRatio: ratio,
+            }
+            }
         });
-      }
 
-      // Call Gemini API
-      const response = await ai.models.generateContent({
-        model: modelId,
-        contents: {
-          parts: parts
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: ratio,
-          }
+        console.log("Raw API Response:", response);
+
+        // --- VALIDATION LOGIC START ---
+        const candidates = response.candidates;
+        if (!candidates || candidates.length === 0) {
+            throw new Error("No candidates returned from Gemini API.");
         }
-      });
 
-      console.log("Raw API Response:", response);
+        const firstCandidate = candidates[0];
 
-      // --- VALIDATION LOGIC START ---
-      const candidates = response.candidates;
-      if (!candidates || candidates.length === 0) {
-          throw new Error("No candidates returned from Gemini API.");
-      }
+        // Check for Finish Reason (e.g., SAFETY)
+        // Cast to string to avoid TypeScript error with enum comparison
+        const finishReason = firstCandidate.finishReason as unknown as string;
 
-      const firstCandidate = candidates[0];
-
-      // Check for Finish Reason (e.g., SAFETY)
-      // Cast to string to avoid TypeScript error with enum comparison
-      const finishReason = firstCandidate.finishReason as unknown as string;
-
-      if (finishReason && finishReason !== "STOP") {
-          console.warn(`Generation stopped. Reason: ${finishReason}`);
-          
-          if (finishReason === "SAFETY") {
-              throw new Error("Generation blocked by Safety Filters. Please try a different prompt or reference image.");
-          }
-          
-          // Some API versions might return "MAX_TOKENS" or other reasons, handle carefully
-          if (finishReason !== "STOP") {
-             throw new Error(`Generation failed. Reason: ${finishReason}`);
-          }
-      }
-
-      // Check Content and Parts existence
-      if (!firstCandidate.content || !firstCandidate.content.parts || firstCandidate.content.parts.length === 0) {
-          throw new Error("The model returned an empty response. This can happen if the prompt is too complex or triggers internal filters.");
-      }
-
-      const outputParts = firstCandidate.content.parts;
-
-      // Ensure it is an array
-      if (!Array.isArray(outputParts)) {
-          console.error("Invalid output format:", outputParts);
-          throw new Error("Invalid response format from AI provider.");
-      }
-      // --- VALIDATION LOGIC END ---
-
-      let generatedImageBase64 = null;
-
-      for (const part of outputParts) {
-        if (part.inlineData && part.inlineData.data) {
-          generatedImageBase64 = part.inlineData.data;
-          break;
+        if (finishReason && finishReason !== "STOP") {
+            console.warn(`Generation stopped. Reason: ${finishReason}`);
+            
+            if (finishReason === "SAFETY") {
+                throw new Error("Generation blocked by Safety Filters. Please try a different prompt or reference image.");
+            }
+            
+            // Some API versions might return "MAX_TOKENS" or other reasons, handle carefully
+            if (finishReason !== "STOP") {
+                throw new Error(`Generation failed. Reason: ${finishReason}`);
+            }
         }
-      }
 
-      if (!generatedImageBase64) {
-        // Fallback: Check if there is text explaining the refusal
-        const textPart = outputParts.find(p => p.text);
-        if (textPart) {
-            console.warn("Model returned text instead of image:", textPart.text);
-            throw new Error(`AI returned text instead of image: "${textPart.text.substring(0, 100)}..."`);
+        // Check Content and Parts existence
+        if (!firstCandidate.content || !firstCandidate.content.parts || firstCandidate.content.parts.length === 0) {
+            throw new Error("The model returned an empty response. This can happen if the prompt is too complex or triggers internal filters.");
         }
-        throw new Error("No image data found in the response.");
-      }
 
-      return `data:image/png;base64,${generatedImageBase64}`;
+        const outputParts = firstCandidate.content.parts;
 
-    } catch (error) {
-      console.error("Gemini Single Generation Error:", error);
-      throw error;
-    }
+        // Ensure it is an array
+        if (!Array.isArray(outputParts)) {
+            console.error("Invalid output format:", outputParts);
+            throw new Error("Invalid response format from AI provider.");
+        }
+        // --- VALIDATION LOGIC END ---
+
+        let generatedImageBase64 = null;
+
+        for (const part of outputParts) {
+            if (part.inlineData && part.inlineData.data) {
+            generatedImageBase64 = part.inlineData.data;
+            break;
+            }
+        }
+
+        if (!generatedImageBase64) {
+            // Fallback: Check if there is text explaining the refusal
+            const textPart = outputParts.find(p => p.text);
+            if (textPart) {
+                console.warn("Model returned text instead of image:", textPart.text);
+                throw new Error(`AI returned text instead of image: "${textPart.text.substring(0, 100)}..."`);
+            }
+            throw new Error("No image data found in the response.");
+        }
+
+        const base64DataUri = `data:image/png;base64,${generatedImageBase64}`;
+
+        // Upload to Cloudinary and return URL
+        try {
+          const cloudinaryUrl = await uploadToCloudinary(base64DataUri, 'influencer_studio');
+          return cloudinaryUrl;
+        } catch (uploadErr) {
+          console.warn('Cloudinary upload failed, falling back to base64:', uploadErr);
+          return base64DataUri;
+        }
+
+        } catch (error) {
+        console.error("Gemini Single Generation Error:", error);
+        throw error;
+        }
+    }); // End withRetry
   };
 
   try {
     console.log(`[Aura AI] Starting batch generation. Size: ${batchSize}`);
     
-    // Create an array of promises based on batchSize
-    const promises = Array(batchSize).fill(null).map(() => generateSingleImage());
+    // SEQUENTIAL EXECUTION
+    const results: string[] = [];
+    for (let i = 0; i < batchSize; i++) {
+        if (i > 0) {
+            // Small extra delay between batch items
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        const result = await generateSingleImage();
+        results.push(result);
+    }
     
-    // Wait for all to complete
-    const results = await Promise.all(promises);
     return results;
 
   } catch (error) {

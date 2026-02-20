@@ -2,9 +2,20 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../../components/Sidebar';
 import { Gallery } from '../../components/Gallery';
-import { GeneratedImage, AspectRatio, ModelStyle, GenerationTask } from '../../types';
+import { PromptBoard } from '../../components/PromptBoard';
+import { GeneratedImage, AspectRatio, ModelStyle, GenerationTask, PromptCard } from '../../types';
 import { generatePixarImage } from '../services/pixarService';
-import { Info, Sparkles, Loader2, Heart, Clapperboard, Send, AlertCircle, CheckCircle2, Clock, RefreshCw } from 'lucide-react';
+import { Info, Sparkles, Loader2, Heart, Clapperboard, Send, AlertCircle, CheckCircle2, Clock, RefreshCw, Download } from 'lucide-react';
+import { rateLimiter } from '../../services/rateLimiter';
+import { useToast } from '../../components/Toast';
+
+const createNewCard = (): PromptCard => ({
+  id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+  prompt: '',
+  style: ModelStyle.PIXAR_CLASSIC,
+  ratio: AspectRatio.LANDSCAPE,
+  status: 'idle',
+});
 
 const PixarStudio: React.FC = () => {
   const [images, setImages] = useState<GeneratedImage[]>([]);
@@ -13,12 +24,21 @@ const PixarStudio: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { addToast } = useToast();
 
-  // Form State
-  const [prompt, setPrompt] = useState('');
-  const [style, setStyle] = useState<ModelStyle>(ModelStyle.PIXAR_CLASSIC);
-  const [ratio, setRatio] = useState<AspectRatio>(AspectRatio.LANDSCAPE);
-  const [batchSize, setBatchSize] = useState(1);
+  // Prompt Board State
+  const [promptCards, setPromptCards] = useState<PromptCard[]>([createNewCard()]);
+  const [isRunningAll, setIsRunningAll] = useState(false);
+
+  // Quota Info (polling)
+  const [quotaInfo, setQuotaInfo] = useState(rateLimiter.getQuotaInfo());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setQuotaInfo(rateLimiter.getQuotaInfo());
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const savedFavs = localStorage.getItem('pixar_favorites');
@@ -33,123 +53,202 @@ const PixarStudio: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('pixar_favorites', JSON.stringify(favorites));
+    try {
+      localStorage.setItem('pixar_favorites', JSON.stringify(favorites));
+    } catch (e) {
+      console.warn('Failed to save favorites to localStorage', e);
+    }
   }, [favorites]);
 
   useEffect(() => {
-    if (images.length > 0) localStorage.setItem('pixar_images', JSON.stringify(images));
+    if (images.length > 0) {
+      try {
+        localStorage.setItem('pixar_images', JSON.stringify(images));
+      } catch (e) {
+        console.warn('localStorage quota exceeded, clearing old pixar images', e);
+        // Keep only the latest 10 images to free space
+        try {
+          const trimmed = images.slice(0, 10);
+          localStorage.setItem('pixar_images', JSON.stringify(trimmed));
+        } catch (e2) {
+          // If still fails, just remove the key entirely
+          localStorage.removeItem('pixar_images');
+        }
+      }
+    }
   }, [images]);
 
   const toggleFavorite = (id: string) => {
     setFavorites(prev => prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]);
   };
 
-  const handleGenerate = async () => {
-    if (!prompt.trim()) return;
+  /**
+   * Run All — process all idle cards IN PARALLEL using Promise.allSettled
+   */
+  const handleRunAll = async () => {
+    const idleCards = promptCards.filter(c => c.status === 'idle' && c.prompt.trim());
+    if (idleCards.length === 0) return;
 
-    // @ts-ignore
-    if (window.aistudio) {
-        // @ts-ignore
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-             // @ts-ignore
-             await window.aistudio.openSelectKey();
-        }
-    }
-
-    const taskId = Date.now().toString();
-    const newTask: GenerationTask = {
-      id: taskId,
-      status: 'pending',
-      timestamp: Date.now(),
-      params: {
-        prompt,
-        style,
-        ratio
-      }
-    };
-
-    setTasks(prev => [newTask, ...prev]);
-    const currentPrompt = prompt;
-    const currentStyle = style;
-    const currentRatio = ratio;
-    setPrompt(''); // Clear input immediately
+    setIsRunningAll(true);
     setError(null);
 
-    generatePixarImage(currentPrompt, currentStyle, currentRatio, batchSize)
-      .then((generatedBase64s) => {
-        const batchId = taskId;
-        const newImages: GeneratedImage[] = generatedBase64s.map((url, index) => ({
-          id: `${batchId}-${index}`,
-          url,
-          prompt: currentPrompt,
-          style: currentStyle,
-          ratio: currentRatio,
-          timestamp: Date.now(),
-          batchId
-        }));
+    // Mark all idle cards as "queued"
+    setPromptCards(prev => prev.map(c => 
+      c.status === 'idle' && c.prompt.trim() ? { ...c, status: 'queued' as const } : c
+    ));
 
-        setImages(prev => [...newImages.reverse(), ...prev]);
-        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed', images: generatedBase64s } : t));
+    // Fire all in parallel
+    const promises = idleCards.map(async (card) => {
+      // Mark as generating
+      setPromptCards(prev => prev.map(c => 
+        c.id === card.id ? { ...c, status: 'generating' as const } : c
+      ));
+
+      // Create a task for the queue display
+      const taskId = card.id;
+      const newTask: GenerationTask = {
+        id: taskId,
+        status: 'pending',
+        timestamp: Date.now(),
+        params: { prompt: card.prompt, style: card.style, ratio: card.ratio },
+      };
+      setTasks(prev => [newTask, ...prev]);
+
+      try {
+        const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1);
+        const base64 = results[0];
+
+        // Update card → done
+        setPromptCards(prev => prev.map(c => 
+          c.id === card.id ? { ...c, status: 'done' as const, resultImage: base64 } : c
+        ));
+
+        // Add to gallery
+        const newImg: GeneratedImage = {
+          id: taskId,
+          url: base64,
+          prompt: card.prompt,
+          style: card.style,
+          ratio: card.ratio,
+          timestamp: Date.now(),
+          batchId: taskId,
+        };
+        setImages(prev => [newImg, ...prev]);
+        setCurrentImage(newImg);
+
+        // Update task → completed
+        setTasks(prev => prev.map(t => 
+          t.id === taskId ? { ...t, status: 'completed', images: results } : t
+        ));
+
+        addToast({ type: 'success', title: '✨ Image Generated', message: card.prompt.substring(0, 60) + '...' });
+        return { cardId: card.id, success: true };
+      } catch (err: any) {
+        console.error(`Card ${card.id} failed:`, err);
+        const errorMsg = err.message || 'Generation failed';
         
-        if (newImages.length > 0) {
-          setCurrentImage(newImages[0]);
-        }
-      })
-      .catch((err: any) => {
-        console.error(err);
-        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'failed' } : t));
-        setError(err.message || "Failed to generate Pixar image.");
+        // Update card → failed
+        setPromptCards(prev => prev.map(c => 
+          c.id === card.id ? { ...c, status: 'failed' as const, error: errorMsg } : c
+        ));
+
+        // Update task → failed
+        setTasks(prev => prev.map(t => 
+          t.id === card.id ? { ...t, status: 'failed' } : t
+        ));
+
+        addToast({ type: 'error', title: 'Generation Failed', message: errorMsg, duration: 8000 });
+        return { cardId: card.id, success: false, error: errorMsg };
+      }
+    });
+
+    // Wait for ALL to settle (parallel)
+    const results = await Promise.allSettled(promises);
+    setIsRunningAll(false);
+    setQuotaInfo(rateLimiter.getQuotaInfo());
+
+    // Summary toast
+    const settled = results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean) as any[];
+    const successCount = settled.filter(r => r?.success).length;
+    const failCount = settled.filter(r => !r?.success).length;
+    if (successCount > 0 || failCount > 0) {
+      addToast({
+        type: failCount > 0 ? 'warning' : 'success',
+        title: `Batch Complete: ${successCount} ✓ / ${failCount} ✗`,
+        message: failCount > 0 ? 'Some prompts failed. Click regenerate to retry.' : 'All images generated successfully!',
       });
+    }
   };
 
-  const handleRegenerate = (originalTask: GenerationTask) => {
-    const { prompt: originalPrompt, style: originalStyle, ratio: originalRatio } = originalTask.params;
-    
-    // @ts-ignore
-    if (window.aistudio) {
-        // @ts-ignore
-        const hasKey = window.aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-             // @ts-ignore
-             window.aistudio.openSelectKey();
-        }
+  // Per-card regenerate
+  const handleRegenerateCard = async (cardId: string) => {
+    const card = promptCards.find(c => c.id === cardId);
+    if (!card) return;
+
+    // Reset card to generating
+    setPromptCards(prev => prev.map(c => 
+      c.id === cardId ? { ...c, status: 'generating' as const, error: undefined, resultImage: undefined } : c
+    ));
+
+    try {
+      const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1);
+      const url = results[0];
+
+      setPromptCards(prev => prev.map(c => 
+        c.id === cardId ? { ...c, status: 'done' as const, resultImage: url } : c
+      ));
+
+      const newImg: GeneratedImage = {
+        id: cardId + '-regen-' + Date.now(),
+        url,
+        prompt: card.prompt,
+        style: card.style,
+        ratio: card.ratio,
+        timestamp: Date.now(),
+        batchId: cardId,
+      };
+      setImages(prev => [newImg, ...prev]);
+      setCurrentImage(newImg);
+
+      addToast({ type: 'success', title: '🔄 Regenerated', message: card.prompt.substring(0, 60) + '...' });
+    } catch (err: any) {
+      setPromptCards(prev => prev.map(c => 
+        c.id === cardId ? { ...c, status: 'failed' as const, error: err.message || 'Regeneration failed' } : c
+      ));
+      addToast({ type: 'error', title: 'Regeneration Failed', message: err.message || 'Please try again' });
     }
+  };
+
+  const handleRegenerate = async (originalTask: GenerationTask) => {
+    const { prompt, style, ratio } = originalTask.params;
 
     const taskId = Date.now().toString();
     const newTask: GenerationTask = {
       id: taskId,
       status: 'pending',
       timestamp: Date.now(),
-      params: {
-        prompt: originalPrompt,
-        style: originalStyle,
-        ratio: originalRatio
-      }
+      params: { prompt, style, ratio },
     };
 
     setTasks(prev => [newTask, ...prev]);
     setError(null);
 
-    generatePixarImage(originalPrompt, originalStyle, originalRatio, batchSize)
+    generatePixarImage(prompt, style, ratio, 1)
       .then((generatedBase64s) => {
-        const batchId = taskId;
         const newImages: GeneratedImage[] = generatedBase64s.map((url, index) => ({
-          id: `${batchId}-${index}`,
+          id: `${taskId}-${index}`,
           url,
-          prompt: originalPrompt,
-          style: originalStyle,
-          ratio: originalRatio,
+          prompt,
+          style,
+          ratio,
           timestamp: Date.now(),
-          batchId
+          batchId: taskId,
         }));
 
         setImages(prev => [...newImages.reverse(), ...prev]);
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed', images: generatedBase64s } : t));
         
-        if (newImages.length > 0) {
-          setCurrentImage(newImages[0]);
-        }
+        if (newImages.length > 0) setCurrentImage(newImages[0]);
       })
       .catch((err: any) => {
         console.error(err);
@@ -198,6 +297,30 @@ const PixarStudio: React.FC = () => {
                       className="max-h-[80vh] max-w-full object-contain rounded-2xl shadow-[0_0_50px_rgba(99,102,241,0.2)] border border-indigo-500/20"
                     />
                     <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(currentImage.url);
+                            const blob = await response.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            const safeName = currentImage.prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                            a.download = `pixar_${safeName}_${Date.now()}.png`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            addToast({ type: 'success', title: 'Downloaded!', message: 'Image saved to your downloads' });
+                          } catch (e) {
+                            window.open(currentImage.url, '_blank');
+                          }
+                        }}
+                        className="p-3 rounded-full backdrop-blur-md border bg-black/40 border-white/10 text-white hover:bg-black/60 transition-all"
+                        title="Download Image"
+                      >
+                        <Download size={20} />
+                      </button>
                       <button 
                         onClick={() => {
                           const task = tasks.find(t => t.id === currentImage.batchId);
@@ -278,7 +401,6 @@ const PixarStudio: React.FC = () => {
                                             </div>
                                         </button>
                                         
-                                        {/* Regenerate Button on Task Card */}
                                         <button 
                                           onClick={(e) => {
                                             e.stopPropagation();
@@ -309,70 +431,15 @@ const PixarStudio: React.FC = () => {
            </div>
         </main>
 
-        <aside className="w-80 border-l border-white/5 bg-[#0a0a0c] flex flex-col p-6 overflow-y-auto">
-          <div className="mb-8">
-            <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-6">Studio Controls</h3>
-            
-            <div className="space-y-6">
-              <div>
-                <label className="block text-xs font-medium text-zinc-500 uppercase mb-3">Character Prompt</label>
-                <textarea 
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="A cute robot exploring a futuristic garden..."
-                  className="w-full h-32 bg-zinc-900 border border-white/5 rounded-xl p-4 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-500 uppercase mb-3">Animation Style</label>
-                <div className="grid grid-cols-1 gap-2">
-                  {[ModelStyle.PIXAR_CLASSIC, ModelStyle.MODERN_DISNEY, ModelStyle.CLAYMATION].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setStyle(s)}
-                      className={`px-4 py-3 rounded-xl text-sm font-medium transition-all text-left border ${
-                        style === s 
-                          ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-300' 
-                          : 'bg-zinc-900 border-transparent text-zinc-400 hover:bg-zinc-800'
-                      }`}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-500 uppercase mb-3">Aspect Ratio</label>
-                <div className="flex gap-2">
-                  {[AspectRatio.LANDSCAPE, AspectRatio.CLASSIC, AspectRatio.PORTRAIT].map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => setRatio(r)}
-                      className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${
-                        ratio === r 
-                          ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-300' 
-                          : 'bg-zinc-900 border-transparent text-zinc-400 hover:bg-zinc-800'
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                onClick={handleGenerate}
-                disabled={!prompt.trim()}
-                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
-              >
-                {tasks.some(t => t.status === 'pending') ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-                {tasks.some(t => t.status === 'pending') ? 'RENDERING...' : 'GENERATE MAGIC'}
-              </button>
-            </div>
-          </div>
-        </aside>
+        {/* Prompt Board — replaces sidebar controls */}
+        <PromptBoard
+          cards={promptCards}
+          onCardsChange={setPromptCards}
+          onRunAll={handleRunAll}
+          onRegenerate={handleRegenerateCard}
+          isRunning={isRunningAll}
+          quotaInfo={quotaInfo}
+        />
       </div>
     </div>
   );

@@ -7,6 +7,8 @@ import { GeneratedImage, AspectRatio, ModelStyle, GenerationTask } from '../../t
 import { generateInfluencerImage } from '../../services/geminiService';
 import { Info, Sparkles, Loader2, Heart, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 
+import { rateLimiter } from '../../services/rateLimiter';
+
 const InfluencerStudio: React.FC = () => {
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -15,6 +17,17 @@ const InfluencerStudio: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Rate Limiting State
+  const [quotaInfo, setQuotaInfo] = useState(rateLimiter.getQuotaInfo());
+
+  // Polling for Quota Info
+  useEffect(() => {
+    const interval = setInterval(() => {
+        setQuotaInfo(rateLimiter.getQuotaInfo());
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Load Data from LocalStorage on Mount
   useEffect(() => {
@@ -86,6 +99,7 @@ const InfluencerStudio: React.FC = () => {
     imageStrength: number, 
     activeReferenceImage: string | null
   ) => {
+    
     // @ts-ignore
     if (window.aistudio) {
         // @ts-ignore
@@ -136,7 +150,7 @@ const InfluencerStudio: React.FC = () => {
         console.error(err);
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'failed' } : t));
         setError(err.message || "Failed to generate image. Please try again.");
-      });
+      })
   };
 
   return (
@@ -279,6 +293,8 @@ const InfluencerStudio: React.FC = () => {
             referenceImage={referenceImage}
             onUploadReference={handleUploadReference}
             onClearReference={() => setReferenceImage(null)}
+            cooldownRemaining={0}
+            quotaInfo={quotaInfo}
         />
 
       </div>
