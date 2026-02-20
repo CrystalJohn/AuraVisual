@@ -255,10 +255,10 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
           <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl border border-zinc-800">
              <div className="flex flex-col">
                 <span className="text-sm text-zinc-300">Batch Size</span>
-                <span className="text-[10px] text-zinc-500">Max 2 for free quota</span>
+                <span className="text-[10px] text-zinc-500">Generate up to 4 images</span>
              </div>
              <div className="flex bg-zinc-950 p-1 rounded-lg border border-zinc-800">
-                {[1, 2].map((num) => (
+                {[1, 2, 3, 4].map((num) => (
                   <button
                     key={num}
                     onClick={() => setBatchSize(num)}
@@ -270,10 +270,23 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
              </div>
           </div>
           
-          <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl border border-zinc-800">
+          <div className="p-3 bg-zinc-900 rounded-xl border border-zinc-800 space-y-2">
              <span className="text-sm text-zinc-300">Aspect Ratio</span>
-             <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
-                <span>9:16 (Portrait)</span>
+             <div className="grid grid-cols-5 gap-1.5">
+                {ASPECT_RATIO_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSelectedRatio(opt.value)}
+                    className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-lg text-center transition-all border ${
+                      selectedRatio === opt.value
+                        ? 'bg-zinc-800 border-lime-500/50 text-lime-400'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'
+                    }`}
+                  >
+                    <span className="text-xs font-bold">{opt.label}</span>
+                    <span className="text-[9px] opacity-60">{opt.sublabel}</span>
+                  </button>
+                ))}
              </div>
           </div>
         </div>

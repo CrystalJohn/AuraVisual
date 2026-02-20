@@ -1,6 +1,7 @@
 
 export enum AspectRatio {
   PORTRAIT = '9:16',
+  PORTRAIT_34 = '3:4',
   LANDSCAPE = '16:9',
   SQUARE = '1:1',
   CLASSIC = '4:3',

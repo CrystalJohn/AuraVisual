@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { PromptCard, ModelStyle, AspectRatio } from '../types';
 import { Plus, Play, Trash2, X, Loader2, CheckCircle2, AlertCircle, Sparkles, Grip, Download, RefreshCw } from 'lucide-react';
+import { CharacterReference } from './CharacterReference';
 
 interface PromptBoardProps {
   cards: PromptCard[];
@@ -9,6 +10,8 @@ interface PromptBoardProps {
   onRegenerate: (cardId: string) => void;
   isRunning: boolean;
   quotaInfo?: { dailyCount: number; dailyLimit: number; remaining: number };
+  characterRef: string | null;
+  onCharacterRefChange: (base64: string | null) => void;
 }
 
 const STYLE_OPTIONS = [
@@ -58,6 +61,8 @@ export const PromptBoard: React.FC<PromptBoardProps> = ({
   onRegenerate,
   isRunning,
   quotaInfo,
+  characterRef,
+  onCharacterRefChange,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +121,13 @@ export const PromptBoard: React.FC<PromptBoardProps> = ({
           Add prompts → Run All → Images generated in parallel
         </p>
       </div>
+
+      {/* Character Reference */}
+      <CharacterReference
+        referenceImage={characterRef}
+        onReferenceChange={onCharacterRefChange}
+        disabled={isRunning}
+      />
 
       {/* Cards List */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">

@@ -5,8 +5,8 @@ import { ConfigurationPanel } from '../../components/ConfigurationPanel';
 import { Gallery } from '../../components/Gallery';
 import { GeneratedImage, AspectRatio, ModelStyle, GenerationTask } from '../../types';
 import { generateInfluencerImage } from '../../services/geminiService';
-import { Info, Sparkles, Loader2, Heart, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
-
+import { Info, Sparkles, Loader2, Heart, AlertCircle, CheckCircle2, Clock, Download, RefreshCw } from 'lucide-react';
+import { useToast } from '../../components/Toast';
 import { rateLimiter } from '../../services/rateLimiter';
 
 const InfluencerStudio: React.FC = () => {
@@ -17,6 +17,7 @@ const InfluencerStudio: React.FC = () => {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { addToast } = useToast();
 
   // Rate Limiting State
   const [quotaInfo, setQuotaInfo] = useState(rateLimiter.getQuotaInfo());
@@ -150,7 +151,65 @@ const InfluencerStudio: React.FC = () => {
         console.error(err);
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'failed' } : t));
         setError(err.message || "Failed to generate image. Please try again.");
+        addToast({ type: 'error', title: 'Generation Failed', message: err.message || 'Please try again', duration: 8000 });
       })
+  };
+
+  // Download image
+  const handleDownload = async (imageUrl: string, prompt: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = prompt.substring(0, 30).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      a.download = `influencer_${safeName}_${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addToast({ type: 'success', title: 'Downloaded!', message: 'Image saved to downloads' });
+    } catch (e) {
+      window.open(imageUrl, '_blank');
+    }
+  };
+
+  // Regenerate from task
+  const handleRegenerate = async (originalTask: GenerationTask) => {
+    const { prompt, style, ratio } = originalTask.params;
+    const taskId = Date.now().toString();
+    const newTask: GenerationTask = {
+      id: taskId,
+      status: 'pending',
+      timestamp: Date.now(),
+      params: { prompt, style, ratio },
+    };
+
+    setTasks(prev => [newTask, ...prev]);
+    setError(null);
+
+    generateInfluencerImage(prompt, referenceImage, style, ratio, '', 1, 0.75)
+      .then((generatedUrls) => {
+        const newImages: GeneratedImage[] = generatedUrls.map((url, index) => ({
+          id: `${taskId}-${index}`,
+          url,
+          prompt,
+          style,
+          ratio,
+          timestamp: Date.now(),
+          batchId: taskId,
+        }));
+        setImages(prev => [...newImages.reverse(), ...prev]);
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'completed', images: generatedUrls } : t));
+        if (newImages.length > 0) setCurrentImage(newImages[0]);
+        addToast({ type: 'success', title: '🔄 Regenerated', message: prompt.substring(0, 60) + '...' });
+      })
+      .catch((err: any) => {
+        console.error(err);
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'failed' } : t));
+        addToast({ type: 'error', title: 'Regeneration Failed', message: err.message || 'Please try again' });
+      });
   };
 
   return (
@@ -189,23 +248,44 @@ const InfluencerStudio: React.FC = () => {
 
            <div className="flex-1 relative flex items-center justify-center p-8 overflow-hidden">
                 {currentImage ? (
-                    <div className="relative h-full w-full flex items-center justify-center">
+                    <div className="relative h-full w-full flex items-center justify-center group">
                         <img 
                             src={currentImage.url} 
                             alt="Main Result" 
                             className="max-h-full max-w-full object-contain rounded-lg shadow-2xl shadow-black border border-zinc-800/50 transition-all duration-500" 
                         />
                          
-                        <button 
+                        {/* Hover overlay with actions */}
+                        <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                          <button 
+                            onClick={() => handleDownload(currentImage.url, currentImage.prompt)}
+                            className="p-3 rounded-full backdrop-blur-md border bg-black/40 border-white/10 text-white hover:bg-black/60 transition-all"
+                            title="Download Image"
+                          >
+                            <Download size={20} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const task = tasks.find(t => t.id === currentImage.batchId);
+                              if (task) handleRegenerate(task);
+                            }}
+                            className="p-3 rounded-full backdrop-blur-md border bg-black/40 border-white/10 text-white hover:bg-black/60 transition-all"
+                            title="Regenerate Variation"
+                          >
+                            <RefreshCw size={20} />
+                          </button>
+                          <button 
                             onClick={() => toggleFavorite(currentImage.id)}
-                            className="absolute top-4 right-4 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur transition-all border border-zinc-700/50 hover:border-zinc-500 group shadow-lg"
+                            className={`p-3 rounded-full backdrop-blur-md border transition-all ${
+                              favorites.includes(currentImage.id) 
+                                ? 'bg-red-500/20 border-red-500/50 text-red-400' 
+                                : 'bg-black/40 border-white/10 text-white hover:bg-black/60'
+                            }`}
                             title="Toggle Favorite"
-                        >
-                            <Heart 
-                                size={20} 
-                                className={`transition-all duration-300 ${favorites.includes(currentImage.id) ? "fill-red-500 text-red-500 scale-110" : "text-zinc-300 group-hover:text-white"}`} 
-                            />
-                        </button>
+                          >
+                            <Heart size={20} fill={favorites.includes(currentImage.id) ? "currentColor" : "none"} />
+                          </button>
+                        </div>
 
                         <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-3 py-1.5 rounded-md text-[10px] text-zinc-400 border border-zinc-800 font-mono uppercase tracking-wider shadow-lg">
                             {currentImage.style}
@@ -262,9 +342,26 @@ const InfluencerStudio: React.FC = () => {
                                         className="w-full h-full relative"
                                     >
                                         <img src={task.images[0]} className="w-full h-full object-cover" />
-                                        <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
+                                        <div className="absolute inset-0 bg-black/20 group-hover:bg-black/50 transition-colors" />
                                         <div className="absolute top-1 right-1">
                                             <CheckCircle2 size={12} className="text-lime-400 bg-black/60 rounded-full" />
+                                        </div>
+                                        {/* Hover actions */}
+                                        <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); handleDownload(task.images![0], task.params.prompt); }}
+                                            className="p-1.5 bg-white/10 hover:bg-white/20 rounded-lg backdrop-blur-sm border border-white/10"
+                                            title="Download"
+                                          >
+                                            <Download size={14} className="text-white" />
+                                          </button>
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); handleRegenerate(task); }}
+                                            className="p-1.5 bg-white/10 hover:bg-white/20 rounded-lg backdrop-blur-sm border border-white/10"
+                                            title="Regenerate"
+                                          >
+                                            <RefreshCw size={14} className="text-white" />
+                                          </button>
                                         </div>
                                     </button>
                                 )}

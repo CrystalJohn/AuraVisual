@@ -2,10 +2,11 @@ import { AspectRatio, ModelStyle } from './types';
 import { Ratio, Image, Film, MonitorPlay, Camera, Zap } from 'lucide-react';
 
 export const ASPECT_RATIO_OPTIONS = [
-  { value: AspectRatio.PORTRAIT, label: '9:16', icon: Ratio },
-  { value: AspectRatio.SQUARE, label: '1:1', icon: Image },
-  { value: AspectRatio.LANDSCAPE, label: '16:9', icon: MonitorPlay },
-  { value: AspectRatio.CLASSIC, label: '4:3', icon: Film },
+  { value: AspectRatio.PORTRAIT, label: '9:16', sublabel: 'Portrait', icon: Ratio },
+  { value: AspectRatio.PORTRAIT_34, label: '3:4', sublabel: 'Social', icon: Ratio },
+  { value: AspectRatio.SQUARE, label: '1:1', sublabel: 'Square', icon: Image },
+  { value: AspectRatio.CLASSIC, label: '4:3', sublabel: 'Classic', icon: Film },
+  { value: AspectRatio.LANDSCAPE, label: '16:9', sublabel: 'Wide', icon: MonitorPlay },
 ];
 
 export const STYLE_OPTIONS = [

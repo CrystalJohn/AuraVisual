@@ -8,7 +8,8 @@ export const generatePixarImage = async (
   prompt: string,
   style: ModelStyle,
   ratio: AspectRatio = AspectRatio.LANDSCAPE,
-  batchSize: number = 1
+  batchSize: number = 1,
+  referenceImageBase64: string | null = null
 ): Promise<string[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -33,18 +34,61 @@ export const generatePixarImage = async (
             styleInstruction = "Claymation style, stop-motion look, tactile textures.";
         }
 
-        const finalPrompt = `
-            ${prefix}
-            CHARACTER DESCRIPTION: ${prompt}
-            STYLE SPECIFIC: ${styleInstruction}
-            NEGATIVE CONSTRAINTS: ${negativePrompt}
-            QUALITY: High detailed, professional 3D render.
-        `;
+        let finalPrompt = "";
+
+        if (referenceImageBase64) {
+            // Character Reference Mode — identity preservation
+            finalPrompt = `
+                ${prefix}
+                
+                INSTRUCTION: You are an expert Disney Pixar 3D character artist.
+                TASK: Generate a NEW Pixar-style image using the attached reference image as the CHARACTER REFERENCE.
+                
+                CHARACTER CONSISTENCY RULES:
+                1. PRESERVE the character's EXACT facial features: face shape, eye shape, eye color, nose, mouth, eyebrows, skin tone.
+                2. PRESERVE the character's hairstyle and hair color — render them in 3D Pixar style.
+                3. PRESERVE the character's body type and proportions.
+                4. CONVERT everything into Disney Pixar 3D animation style — NOT realistic, NOT photograph.
+                5. The character should look like the SAME PERSON from the reference, just rendered as a Pixar character.
+                
+                SCENE: ${prompt}
+                STYLE: ${styleInstruction}
+                
+                NEGATIVE CONSTRAINTS: ${negativePrompt}
+                QUALITY: High detailed, professional 3D render. Consistent character identity across all frames.
+            `;
+        } else {
+            // Text-only mode (no reference)
+            finalPrompt = `
+                ${prefix}
+                CHARACTER DESCRIPTION: ${prompt}
+                STYLE SPECIFIC: ${styleInstruction}
+                NEGATIVE CONSTRAINTS: ${negativePrompt}
+                QUALITY: High detailed, professional 3D render.
+            `;
+        }
+
+        // Build parts array
+        const parts: any[] = [{ text: finalPrompt }];
+
+        // Prepend reference image if provided
+        if (referenceImageBase64) {
+            const base64Data = referenceImageBase64.includes(',') 
+                ? referenceImageBase64.split(',')[1] 
+                : referenceImageBase64;
+            
+            parts.unshift({
+                inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: base64Data
+                }
+            });
+        }
 
         const response = await ai.models.generateContent({
             model: modelId,
             contents: {
-            parts: [{ text: finalPrompt }]
+            parts: parts
             },
             config: {
             imageConfig: {

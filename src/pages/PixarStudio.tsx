@@ -30,6 +30,9 @@ const PixarStudio: React.FC = () => {
   const [promptCards, setPromptCards] = useState<PromptCard[]>([createNewCard()]);
   const [isRunningAll, setIsRunningAll] = useState(false);
 
+  // Character Reference
+  const [characterRef, setCharacterRef] = useState<string | null>(null);
+
   // Quota Info (polling)
   const [quotaInfo, setQuotaInfo] = useState(rateLimiter.getQuotaInfo());
 
@@ -115,7 +118,7 @@ const PixarStudio: React.FC = () => {
       setTasks(prev => [newTask, ...prev]);
 
       try {
-        const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1);
+        const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1, characterRef);
         const base64 = results[0];
 
         // Update card → done
@@ -191,7 +194,7 @@ const PixarStudio: React.FC = () => {
     ));
 
     try {
-      const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1);
+      const results = await generatePixarImage(card.prompt, card.style, card.ratio, 1, characterRef);
       const url = results[0];
 
       setPromptCards(prev => prev.map(c => 
@@ -233,7 +236,7 @@ const PixarStudio: React.FC = () => {
     setTasks(prev => [newTask, ...prev]);
     setError(null);
 
-    generatePixarImage(prompt, style, ratio, 1)
+    generatePixarImage(prompt, style, ratio, 1, characterRef)
       .then((generatedBase64s) => {
         const newImages: GeneratedImage[] = generatedBase64s.map((url, index) => ({
           id: `${taskId}-${index}`,
@@ -439,6 +442,8 @@ const PixarStudio: React.FC = () => {
           onRegenerate={handleRegenerateCard}
           isRunning={isRunningAll}
           quotaInfo={quotaInfo}
+          characterRef={characterRef}
+          onCharacterRefChange={setCharacterRef}
         />
       </div>
     </div>
