@@ -3,9 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../../components/Sidebar';
 import { Gallery } from '../../components/Gallery';
 import { PromptBoard } from '../../components/PromptBoard';
+import { FilmWorkflow } from '../../components/FilmWorkflow';
 import { GeneratedImage, AspectRatio, ModelStyle, GenerationTask, PromptCard } from '../../types';
 import { generatePixarImage } from '../services/pixarService';
-import { Info, Sparkles, Loader2, Heart, Clapperboard, Send, AlertCircle, CheckCircle2, Clock, RefreshCw, Download } from 'lucide-react';
+import { Info, Sparkles, Loader2, Heart, Clapperboard, Send, AlertCircle, CheckCircle2, Clock, RefreshCw, Download, Film, ImageIcon } from 'lucide-react';
 import { rateLimiter } from '../../services/rateLimiter';
 import { useToast } from '../../components/Toast';
 
@@ -32,6 +33,9 @@ const PixarStudio: React.FC = () => {
 
   // Character Reference
   const [characterRef, setCharacterRef] = useState<string | null>(null);
+
+  // Studio Mode: image vs film
+  const [studioMode, setStudioMode] = useState<'image' | 'film'>('image');
 
   // Quota Info (polling)
   const [quotaInfo, setQuotaInfo] = useState(rateLimiter.getQuotaInfo());
@@ -434,17 +438,45 @@ const PixarStudio: React.FC = () => {
            </div>
         </main>
 
-        {/* Prompt Board — replaces sidebar controls */}
-        <PromptBoard
-          cards={promptCards}
-          onCardsChange={setPromptCards}
-          onRunAll={handleRunAll}
-          onRegenerate={handleRegenerateCard}
-          isRunning={isRunningAll}
-          quotaInfo={quotaInfo}
-          characterRef={characterRef}
-          onCharacterRefChange={setCharacterRef}
-        />
+        {/* Right Panel — Mode Switch */}
+        {studioMode === 'image' ? (
+          <PromptBoard
+            cards={promptCards}
+            onCardsChange={setPromptCards}
+            onRunAll={handleRunAll}
+            onRegenerate={handleRegenerateCard}
+            isRunning={isRunningAll}
+            quotaInfo={quotaInfo}
+            characterRef={characterRef}
+            onCharacterRefChange={setCharacterRef}
+          />
+        ) : (
+          <FilmWorkflow characterRef={characterRef} />
+        )}
+
+        {/* Mode Toggle Floating Button */}
+        <div className="fixed bottom-6 right-[400px] z-50 flex bg-zinc-900/90 backdrop-blur-xl rounded-full border border-zinc-700/50 p-1 shadow-2xl shadow-black/50">
+          <button
+            onClick={() => setStudioMode('image')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
+              studioMode === 'image'
+                ? 'bg-lime-500/20 text-lime-300 border border-lime-500/30'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <ImageIcon size={12} /> Images
+          </button>
+          <button
+            onClick={() => setStudioMode('film')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
+              studioMode === 'film'
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Film size={12} /> Film
+          </button>
+        </div>
       </div>
     </div>
   );

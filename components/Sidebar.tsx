@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Image, Settings, User, Clapperboard } from 'lucide-react';
+import { Compass, Image, Settings, User, Clapperboard, BookOpen } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 interface SidebarProps {
@@ -31,6 +31,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onToggleGallery, isGalleryOpen
             icon={Clapperboard} 
             label="Pixar Studio" 
             active={location.pathname === '/pixar'} 
+          />
+        </Link>
+        <Link to="/storyboard">
+          <NavItem 
+            icon={BookOpen} 
+            label="Storyboard" 
+            active={location.pathname === '/storyboard'} 
           />
         </Link>
         
@@ -67,3 +74,4 @@ const NavItem: React.FC<{ icon: any, label: string, active?: boolean, onClick?: 
     {active && <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-1 h-5 bg-indigo-400 rounded-r-full" />}
   </button>
 );
+
