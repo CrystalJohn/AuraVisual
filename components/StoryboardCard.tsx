@@ -12,6 +12,8 @@ import {
   Edit3,
   Check,
   Loader2,
+  MessageSquare,
+  Download,
 } from 'lucide-react';
 
 interface StoryboardCardProps {
@@ -19,6 +21,8 @@ interface StoryboardCardProps {
   onEdit: (id: string, updates: Partial<StoryboardScene>) => void;
   onRegenerate: (id: string) => void;
   onGenerateFrame: (id: string) => void;
+  onPreviewMedia?: (url: string, type: 'image' | 'video') => void;
+  onDownloadFrame?: (url: string) => void;
   isGeneratingFrame: boolean;
   disabled: boolean;
 }
@@ -28,6 +32,8 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
   onEdit,
   onRegenerate,
   onGenerateFrame,
+  onPreviewMedia,
+  onDownloadFrame,
   isGeneratingFrame,
   disabled,
 }) => {
@@ -74,13 +80,23 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
       </div>
 
       {/* First Frame Preview */}
-      <div className="relative aspect-video bg-zinc-950 border-b border-zinc-800 flex items-center justify-center overflow-hidden">
+      <div className="relative aspect-video bg-zinc-950 border-b border-zinc-800 flex items-center justify-center overflow-hidden group">
         {scene.firstFrameUrl ? (
-          <img
-            src={scene.firstFrameUrl}
-            alt={`Scene ${scene.sceneNumber} preview`}
-            className="w-full h-full object-cover"
-          />
+          <div 
+            className="w-full h-full cursor-zoom-in relative"
+            onClick={() => onPreviewMedia && onPreviewMedia(scene.firstFrameUrl!, 'image')}
+          >
+            <img
+              src={scene.firstFrameUrl}
+              alt={`Scene ${scene.sceneNumber} preview`}
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none">
+              <span className="bg-black/80 text-white text-[10px] px-2 py-1 rounded-md backdrop-blur-md flex items-center gap-1 font-semibold">
+                <ImageIcon size={10} /> View
+              </span>
+            </div>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-zinc-600">
             <ImageIcon size={24} strokeWidth={1.5} />
@@ -98,14 +114,32 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
           </div>
         )}
         {scene.firstFrameUrl && (
-          <button
-            onClick={() => onGenerateFrame(scene.id)}
-            disabled={disabled || isGeneratingFrame}
-            className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 text-zinc-300 hover:text-white hover:bg-black/80 transition-all"
-            title="Regenerate frame"
-          >
-            {isGeneratingFrame ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-          </button>
+          <div className="absolute top-1.5 right-1.5 flex gap-1 z-10">
+            {onDownloadFrame && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownloadFrame(scene.firstFrameUrl!);
+                }}
+                disabled={disabled}
+                className="p-1.5 rounded-md bg-black/60 text-zinc-300 hover:text-white hover:bg-black/80 transition-all backdrop-blur-sm shadow-sm"
+                title="Download Upscaled 1080p Image"
+              >
+                <Download size={10} />
+              </button>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onGenerateFrame(scene.id);
+              }}
+              disabled={disabled || isGeneratingFrame}
+              className="p-1.5 rounded-md bg-black/60 text-zinc-300 hover:text-white hover:bg-black/80 transition-all backdrop-blur-sm shadow-sm"
+              title="Regenerate frame"
+            >
+              {isGeneratingFrame ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+            </button>
+          </div>
         )}
       </div>
 
@@ -134,6 +168,39 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
           </p>
         )}
       </div>
+
+      {/* Dialogue Description */}
+      {scene.dialogue && (scene.dialogue.text_vi || (scene.dialogue.exchange && scene.dialogue.exchange.length > 0)) && (
+        <div className="px-3 py-2 border-b border-zinc-800/50 bg-indigo-500/5">
+          {scene.dialogue.exchange && scene.dialogue.exchange.length > 0 ? (
+            <div className="space-y-2">
+              {scene.dialogue.exchange.map((msg, idx) => (
+                <div key={idx} className="flex flex-col gap-0.5">
+                  <span className="text-[9px] uppercase font-bold text-indigo-400/80">{msg.speaker || `Speaker ${idx + 1}`}</span>
+                  <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg rounded-tl-sm px-2 py-1.5 inline-block w-fit max-w-[90%]">
+                    <p className="text-[11px] font-medium text-indigo-200 leading-snug">"{msg.text_vi}"</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5 opacity-70">
+                    <span className="text-[8px] text-zinc-400 bg-zinc-800/80 px-1 py-0.5 rounded">⏱ {msg.timing}</span>
+                    <span className="text-[8px] text-zinc-400 bg-zinc-800/80 px-1 py-0.5 rounded">🎭 {msg.emotion}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : scene.dialogue.text_vi ? (
+            <>
+              <p className="text-[11px] font-semibold text-indigo-300 flex items-start gap-1.5 leading-relaxed">
+                <MessageSquare size={12} className="mt-0.5 shrink-0" />
+                <span>{scene.dialogue.speaker ? <span className="font-bold mr-1">{scene.dialogue.speaker}:</span> : null}"{scene.dialogue.text_vi}"</span>
+              </p>
+              <div className="flex items-center gap-2 mt-1.5 pl-4 opacity-70">
+                <span className="text-[9px] text-zinc-400 bg-zinc-800/80 px-1.5 py-0.5 rounded">⏱ {scene.dialogue.timing}</span>
+                <span className="text-[9px] text-zinc-400 bg-zinc-800/80 px-1.5 py-0.5 rounded">🎭 {scene.dialogue.emotion}</span>
+              </div>
+            </>
+          ) : null}
+        </div>
+      )}
 
       {/* Dual Prompt Sections */}
       <div className="flex-1 flex flex-col">
@@ -217,9 +284,9 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
               )}
               <button
                 onClick={() => copyToClipboard(scene.videoPrompt, 'video')}
-                className="text-[9px] text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"
+                className="w-full mt-2 py-1.5 text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-lg flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 transition-all border border-purple-400/30"
               >
-                <Copy size={8} /> {copied === 'video' ? 'Copied!' : 'Copy'}
+                <Copy size={10} /> {copied === 'video' ? 'Copied!' : 'Copy Video Prompt for Grok'}
               </button>
             </div>
           )}

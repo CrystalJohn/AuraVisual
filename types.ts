@@ -89,6 +89,30 @@ export interface FilmProject {
 
 // --- Storyboard & Prompt Engine ---
 
+export interface StoryboardCharacter {
+  name: string;
+  description: string;
+  color_key: string;
+  role?: string;
+}
+
+export interface StoryboardCharacters {
+  main: StoryboardCharacter;
+  secondary?: StoryboardCharacter;
+}
+
+export interface StoryboardProp {
+  name: string;
+  description: string;
+  scenes_used: number[];
+}
+
+export interface StoryboardResult {
+  characters: StoryboardCharacters;
+  props: StoryboardProp[];
+  scenes: StoryboardScene[];
+}
+
 export interface StoryboardScene {
   id: string;
   sceneNumber: number;
@@ -99,6 +123,22 @@ export interface StoryboardScene {
   videoPrompt: string;      // for Veo 3.1 video generation
   audioDescription: string;
   narration: string;
+  dialogue: {
+    model?: 'parent-child' | 'peer-to-peer' | 'solo-narrator';
+    speaker?: string;
+    text_vi?: string;
+    phonetic_guide?: string;
+    timing?: string;
+    emotion?: string;
+    exchange?: {
+      speaker?: string;
+      text_vi: string;
+      phonetic_guide: string;
+      timing: string;
+      emotion: string;
+    }[];
+    pacing?: string;
+  };
   firstFrameUrl?: string;   // preview image URL (generated)
   status: 'idle' | 'generating' | 'done' | 'failed';
   error?: string;

@@ -5,8 +5,8 @@ import {
   RotateCcw, Video, Scissors,
 } from "lucide-react";
 import { FilmScene, FilmProject } from "../types";
-import { generateScreenplay, parseExistingScript, renderScene, renderAllScenes } from "../services/filmService";
-import { concatenateClips } from "../services/videoPostService";
+import { generateScreenplay, parseExistingScript } from "../services/filmService";
+import { assembleClips } from "../src/services/assemblyService";
 import { useToast } from "./Toast";
 
 // ─── Step Indicator ─────────────────────────────────────────────────
@@ -124,21 +124,6 @@ const SceneCard: React.FC<{
         </div>
       )}
 
-      {/* Error + Retry */}
-      {scene.status === "failed" && (
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[9px] text-red-400 flex-1">{scene.error}</p>
-          {onRetry && (
-            <button
-              onClick={() => onRetry(scene.id)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 text-[10px] font-bold hover:bg-amber-500/25 transition-all border border-amber-500/20 shrink-0"
-            >
-              <RotateCcw size={10} /> Retry
-            </button>
-          )}
-        </div>
-      )}
-
       {/* Video Preview */}
       {scene.status === "done" && scene.videoUrl && (
         <div className="space-y-1">
@@ -197,6 +182,9 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
   const [postProgress, setPostProgress] = useState(0);
   const [inputMode, setInputMode] = useState<'generate' | 'import'>('generate');
+  
+  // Manual clips for assembly
+  const [uploadedClips, setUploadedClips] = useState<File[]>([]);
 
   // ─── Step 1: Generate Screenplay ───────────────────────────────
 
@@ -238,78 +226,31 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
     }
   };
 
-  // ─── Step 2 → 3: Start Rendering ──────────────────────────────
+  // ─── Step 2 → 3: Upload Clips ─────────────────────────────────
 
-  const handleStartRender = async () => {
-    setIsProcessing(true);
+  const handleUploadClips = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newFiles = Array.from(files).filter(f => f.type.startsWith('video/'));
+    setUploadedClips(newFiles);
+    
+    // Attempt to map back to scenes if counts match
+    if (newFiles.length === scenes.length) {
+      setScenes(prev => prev.map((s, i) => ({
+        ...s,
+        status: "done",
+        videoUrl: URL.createObjectURL(newFiles[i])
+      })));
+    }
+    
     setCurrentStep(3);
-
-    // Mark all scenes as rendering
-    setScenes((prev) =>
-      prev.map((s) => ({ ...s, status: "rendering" as const, progress: 0 }))
-    );
-
-    addToast({ type: "info", title: "🎥 Rendering (Sequential)...", message: `${scenes.length} scenes queued — rendering one by one to avoid rate limits` });
-
-    await renderAllScenes(
-      scenes,
-      characterRef,
-      aspectRatio,
-      resolution,
-      // onSceneProgress
-      (sceneId, progress) => {
-        setScenes((prev) =>
-          prev.map((s) =>
-            s.id === sceneId ? { ...s, status: "polling" as const, progress } : s
-          )
-        );
-      },
-      // onSceneComplete
-      (sceneId, videoUrl) => {
-        setScenes((prev) =>
-          prev.map((s) =>
-            s.id === sceneId ? { ...s, status: "done" as const, videoUrl, progress: 100 } : s
-          )
-        );
-        addToast({ type: "success", title: "✅ Scene Done", message: `Scene rendered successfully` });
-      },
-      // onSceneError
-      (sceneId, error) => {
-        setScenes((prev) =>
-          prev.map((s) =>
-            s.id === sceneId ? { ...s, status: "failed" as const, error } : s
-          )
-        );
-        addToast({ type: "error", title: "❌ Scene Failed", message: error });
-      }
-    );
-
-    // Use setState callback to check final state correctly
-    setScenes((prev) => {
-      const doneScenes = prev.filter((s) => s.status === "done").length;
-      const failedScenes = prev.filter((s) => s.status === "failed").length;
-      if (doneScenes > 0) {
-        addToast({
-          type: "success",
-          title: "🎬 Rendering Complete",
-          message: `${doneScenes} done, ${failedScenes} failed — ready for Post-Pro`,
-        });
-      }
-      return prev;
-    });
-
-    setIsProcessing(false);
+    addToast({ type: "success", title: "Clips Uploaded", message: `${newFiles.length} clips locked and loaded.` });
   };
 
   // ─── Step 4: Post-Production ──────────────────────────────────
 
   const handlePostProduction = async () => {
-    const videoUrls = scenes
-      .filter((s) => s.status === "done" && s.videoUrl)
-      .map((s) => s.videoUrl!);
-
-    if (videoUrls.length === 0) {
-      addToast({ type: "error", title: "No videos", message: "No scenes completed" });
+    if (uploadedClips.length === 0) {
+      addToast({ type: "error", title: "No videos", message: "Please upload clips first." });
       return;
     }
 
@@ -318,23 +259,16 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
     setPostProgress(0);
 
     try {
-      addToast({ type: "info", title: "🎞️ Post-Production...", message: `Stitching ${videoUrls.length} clips together` });
+      addToast({ type: "info", title: "🎞️ Assembling...", message: `Stitching ${uploadedClips.length} clips via WASM` });
 
-      // Timeout wrapper — 120 seconds max for post-production
-      const timeoutMs = 120_000;
-      const result = await Promise.race([
-        concatenateClips(videoUrls, (p) => setPostProgress(p)),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Post-production timed out (2 min). Try fewer or shorter clips.")), timeoutMs)
-        ),
-      ]);
+      const url = await assembleClips(uploadedClips, (p) => setPostProgress(p));
 
-      setFinalVideoUrl(result);
+      setFinalVideoUrl(url);
       setCurrentStep(5);
       addToast({ type: "success", title: "🎬 Film Complete!", message: "Your short film is ready!" });
     } catch (err: any) {
-      addToast({ type: "error", title: "Post-Pro Failed", message: err.message, duration: 10000 });
-      // Don't reset step — let user retry
+      addToast({ type: "error", title: "Assembly Failed", message: err.message, duration: 10000 });
+      setCurrentStep(3); // Reset to upload step
     } finally {
       setIsProcessing(false);
     }
@@ -344,51 +278,6 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
 
   const editScene = (id: string, updates: Partial<FilmScene>) => {
     setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
-  };
-
-  // ─── Retry Failed Scene ───────────────────────────────────────
-
-  const handleRetryScene = async (sceneId: string) => {
-    const scene = scenes.find((s) => s.id === sceneId);
-    if (!scene) return;
-
-    // Reset scene status
-    setScenes((prev) =>
-      prev.map((s) =>
-        s.id === sceneId ? { ...s, status: "rendering" as const, error: undefined, progress: 0, videoUrl: undefined } : s
-      )
-    );
-
-    addToast({ type: "info", title: "🔄 Retrying...", message: `Re-rendering Scene ${scene.sceneNumber}` });
-
-    try {
-      const videoUrl = await renderScene(
-        scene,
-        characterRef,
-        aspectRatio,
-        resolution,
-        (progress) => {
-          setScenes((prev) =>
-            prev.map((s) =>
-              s.id === sceneId ? { ...s, status: "polling" as const, progress } : s
-            )
-          );
-        }
-      );
-      setScenes((prev) =>
-        prev.map((s) =>
-          s.id === sceneId ? { ...s, status: "done" as const, videoUrl, progress: 100 } : s
-        )
-      );
-      addToast({ type: "success", title: "✅ Scene Done", message: `Scene ${scene.sceneNumber} rendered!` });
-    } catch (err: any) {
-      setScenes((prev) =>
-        prev.map((s) =>
-          s.id === sceneId ? { ...s, status: "failed" as const, error: err.message } : s
-        )
-      );
-      addToast({ type: "error", title: "❌ Retry Failed", message: err.message });
-    }
   };
 
   // ─── Download Final ───────────────────────────────────────────
@@ -568,27 +457,34 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
               </span>
             </div>
             {scenes.map((scene) => (
-              <SceneCard key={scene.id} scene={scene} onEdit={editScene} onRetry={handleRetryScene} disabled={isProcessing} />
+              <SceneCard key={scene.id} scene={scene} onEdit={editScene} disabled={isProcessing} />
             ))}
           </div>
         )}
 
-        {/* ─── Step 3: Rendering ───────────────────────────── */}
+        {/* ─── Step 3: Upload Clips ───────────────────────────── */}
         {currentStep === 3 && (
-          <div className="space-y-2">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-zinc-300">
-                🎥 Rendering — {doneCount}/{scenes.length}
+                📥 Upload Grok Clips ({uploadedClips.length})
               </span>
-              {isProcessing && (
-                <span className="text-[10px] text-indigo-300 flex items-center gap-1">
-                  <Loader2 size={10} className="animate-spin" /> Veo 3.1
-                </span>
-              )}
             </div>
-            {scenes.map((scene) => (
-              <SceneCard key={scene.id} scene={scene} onEdit={editScene} onRetry={handleRetryScene} disabled={false} />
-            ))}
+            
+            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-700/50 rounded-xl bg-zinc-900/50 hover:bg-zinc-800/50 transition-colors cursor-pointer group">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Video size={24} className="text-zinc-500 group-hover:text-indigo-400 mb-2 transition-colors" />
+                <p className="mb-2 text-xs text-zinc-400"><span className="font-semibold text-indigo-400">Click to upload</span> or drag and drop</p>
+                <p className="text-[10px] text-zinc-500">MP4 files directly from Grok</p>
+              </div>
+              <input type="file" className="hidden" accept="video/mp4" multiple onChange={(e) => handleUploadClips(e.target.files)} />
+            </label>
+
+            <div className="space-y-2">
+              {scenes.map((scene) => (
+                <SceneCard key={scene.id} scene={scene} onEdit={editScene} disabled={false} />
+              ))}
+            </div>
           </div>
         )}
 
@@ -597,7 +493,7 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
           <div className="space-y-3">
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-center space-y-3">
               <Scissors size={24} className="text-purple-400 mx-auto animate-pulse" />
-              <p className="text-xs text-zinc-300 font-medium">Stitching {doneCount} clips...</p>
+              <p className="text-xs text-zinc-300 font-medium">Assembling {uploadedClips.length} clips...</p>
               <div className="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300"
@@ -605,14 +501,9 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
                 />
               </div>
               <p className="text-[10px] text-zinc-500">
-                {postProgress < 15
-                  ? `${postProgress}% — Loading video clips...`
-                  : postProgress < 95
-                  ? `${postProgress}% — Recording frames to canvas...`
-                  : `${postProgress}% — Finalizing...`}
-              </p>
-              <p className="text-[9px] text-zinc-600">
-                💡 Using Canvas + MediaRecorder (no heavy downloads needed)
+                {postProgress < 100 
+                  ? `${postProgress.toFixed(0)}% — Processing via FFmpeg WASM...`
+                  : "Finalizing..."}
               </p>
             </div>
           </div>
@@ -676,22 +567,20 @@ export const FilmWorkflow: React.FC<FilmWorkflowProps> = ({ characterRef }) => {
         )}
 
         {currentStep === 2 && (
-          <button
-            onClick={handleStartRender}
-            disabled={isProcessing || scenes.length === 0}
-            className="w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-indigo-500 to-blue-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 flex items-center justify-center gap-2 transition-all"
-          >
-            <Play size={16} /> Render {scenes.length} Scenes with Veo 3.1
-          </button>
+          <div className="space-y-2">
+            <label className="flex w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-indigo-500 to-blue-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 items-center justify-center gap-2 transition-all cursor-pointer">
+              <Play size={16} /> Upload ${scenes.length} Clips (MP4)
+              <input type="file" className="hidden" accept="video/mp4" multiple onChange={(e) => handleUploadClips(e.target.files)} />
+            </label>
+          </div>
         )}
 
-        {currentStep === 3 && !isProcessing && doneCount > 0 && (
+        {currentStep === 3 && !isProcessing && uploadedClips.length > 0 && (
           <button
             onClick={handlePostProduction}
-            disabled={doneCount === 0}
             className="w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 flex items-center justify-center gap-2 transition-all"
           >
-            <Scissors size={16} /> Stitch {doneCount} Clips → Final Film
+            <Scissors size={16} /> Assembling {uploadedClips.length} Clips → Final Film
           </button>
         )}
 
